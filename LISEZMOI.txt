@@ -1,0 +1,20 @@
+CLIPSTUDIO - DEMARRAGE EN 3 ETAPES
+==================================
+
+1. Double-clique sur  start.bat
+
+2. Si Windows affiche "Windows a protege votre PC" :
+   clique sur "Informations complementaires" puis "Executer quand meme".
+   Au tout premier lancement, le programme telecharge ~130 Mo (internet requis,
+   quelques minutes). Les fois suivantes, c'est immediat.
+
+3. Attends que la page s'ouvre toute seule dans le navigateur.
+   Si elle ne s'ouvre pas, tape cette adresse dans le navigateur :
+       http://127.0.0.1:8000
+   Garde la fenetre noire ouverte : la fermer arrete ClipStudio.
+
+
+SI CA NE MARCHE PAS
+-------------------
+Un fichier nomme  diagnostic.txt  apparait dans ce dossier.
+Envoie-le moi tel quel, il contient tout ce qu'il me faut pour corriger.

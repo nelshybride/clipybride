@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>ClipStudio — studio de clips local</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✂️</text></svg>" />
+  <link rel="stylesheet" href="/styles.css?v=2" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">
+      <span class="mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.12 15.88M14.47 14.48 20 20M8.12 8.12 12 12"/></svg>
+      </span>
+      <span class="name">clip<span>studio</span></span>
+    </a>
+    <div class="chips">
+      <span class="chip" id="chipLocal"><i class="dot ok"></i> Traitement local</span>
+      <span class="chip" id="chipTools" title="État des outils vidéo"><i class="dot"></i> outils</span>
+      <button class="chip chip-btn" id="chipStorage" type="button" title="Gérer le stockage local">
+        <i class="dot"></i> Stockage —
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <section id="importArea">
+      <div class="hero">
+        <p class="eyebrow">Studio de clips · aucun envoi sur internet</p>
+        <h1>Un live.<br /><em>Une dizaine de clips.</em></h1>
+        <p class="sub">Dépose ta vidéo, colle un lien YouTube, Twitch ou Kick, ou pioche dans les clips d’une chaîne Twitch : ClipStudio repère les passages forts, les recadre en 9:16 ou 16:9 et te rend des MP4 prêts à publier.</p>
+      </div>
+
+      <div class="card import-card">
+        <div class="tabs" role="tablist" aria-label="Source de la vidéo">
+          <button class="tab active" data-tab="file" role="tab" aria-selected="true">Fichier vidéo</button>
+          <button class="tab" data-tab="url" role="tab" aria-selected="false">Lien YouTube / Twitch / Kick</button>
+          <button class="tab" data-tab="twitch" role="tab" aria-selected="false">Clips Twitch</button>
+        </div>
+
+        <div id="filePane">
+          <label class="dropzone" id="dropzone" tabindex="0">
+            <input type="file" id="fileInput" hidden
+                   accept="video/mp4,video/quicktime,video/x-matroska,video/webm,.mp4,.mov,.mkv,.webm,.m4v" />
+            <span class="dz-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4m0 0L7 9m5-5 5 5"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+            </span>
+            <strong id="dzTitle">Dépose ta vidéo ici</strong>
+            <small id="dzHint">ou clique pour parcourir · MP4, MOV, MKV, WebM — jusqu’à 3 Go</small>
+          </label>
+        </div>
+
+        <div id="urlPane" class="hidden">
+          <label class="field-label" for="urlInput">URL de la vidéo</label>
+          <input id="urlInput" class="text-input" type="url" autocomplete="off"
+                 placeholder="https://www.youtube.com/watch?v=…" />
+          <p class="hint">VOD et clips publics YouTube, Twitch ou Kick (ex. <code>kick.com/chaîne/videos/…</code>), dans le respect des conditions de chaque plateforme.</p>
+        </div>
+
+        <div id="twitchPane" class="hidden">
+          <p class="hint twitch-note" id="twitchNote">Connecte ton application Twitch pour lister les clips d’une chaîne.</p>
+
+          <div id="twitchSetup" class="hidden">
+            <div class="setup-grid">
+              <input id="twitchId" class="text-input" placeholder="Client ID" autocomplete="off" />
+              <input id="twitchSecret" class="text-input" type="password" placeholder="Client Secret" autocomplete="off" />
+            </div>
+            <button class="btn primary" id="twitchSave" type="button">Enregistrer</button>
+            <p class="hint">
+              Crée une application « Confidential » sur
+              <a href="https://dev.twitch.tv/console/apps" target="_blank" rel="noreferrer">dev.twitch.tv/console/apps</a>
+              puis colle son Client ID et son Client Secret. Ils sont stockés uniquement sur cet ordinateur
+              (<code>backend/data/twitch.json</code>) et ne sont jamais renvoyés au navigateur.
+            </p>
+          </div>
+
+          <div id="twitchManager" class="hidden">
+            <div class="channel-row">
+              <input id="channelInput" class="text-input" placeholder="nom de la chaîne (ex. kameto)" autocomplete="off" />
+              <button class="btn" id="channelAdd" type="button">Ajouter</button>
+            </div>
+
+            <div class="channel-list" id="channelList"></div>
+
+            <div class="period-row">
+              <div class="segmented small" id="periodSeg" role="group" aria-label="Période">
+                <button type="button" data-value="day">24 h</button>
+                <button type="button" data-value="week" class="active">7 jours</button>
+                <button type="button" data-value="month">30 jours</button>
+                <button type="button" data-value="all">Tout</button>
+              </div>
+              <button class="btn ghost small" id="twitchRefresh" type="button">Actualiser</button>
+            </div>
+
+            <div class="twitch-grid" id="twitchGrid"></div>
+          </div>
+        </div>
+
+        <div class="progress hidden" id="uploadProgress">
+          <div class="bar"><span id="uploadBar"></span></div>
+          <div class="progress-meta"><span id="uploadLabel">Envoi…</span><span id="uploadPct">0 %</span></div>
+        </div>
+
+        <button class="btn primary wide" id="importBtn" disabled>
+          <span class="btn-ico" aria-hidden="true">＋</span>
+          <span id="importLabel">Importer la vidéo</span>
+        </button>
+      </div>
+    </section>
+
+    <section class="workspace hidden" id="workspace">
+      <div class="card media-card">
+        <div class="card-head">
+          <h2>Source</h2>
+          <button class="btn ghost small" id="changeBtn">Changer de vidéo</button>
+        </div>
+        <div class="player">
+          <video id="sourceVideo" class="source-video" controls playsinline preload="metadata"></video>
+        </div>
+        <div class="media-meta">
+          <strong id="sourceName">—</strong>
+          <div class="media-stats">
+            <span class="stat"><b id="sourceDuration">0:00</b><i>durée</i></span>
+            <span class="stat"><b id="sourceSize">—</b><i>fichier</i></span>
+            <span class="stat"><b id="sourceRes">—</b><i>format</i></span>
+          </div>
+        </div>
+      </div>
+
+      <aside class="card controls-card">
+        <div class="card-head">
+          <h2>Réglages</h2>
+          <span class="badge" id="methodBadge">automatique</span>
+        </div>
+
+        <div class="field">
+          <div class="field-head"><span>Nombre de clips</span><b id="countValue">5</b></div>
+          <input type="range" id="countRange" min="1" max="20" step="1" value="5"
+                 aria-label="Nombre de clips" />
+          <div class="range-ends"><span>1</span><span>20</span></div>
+        </div>
+
+        <div class="field">
+          <div class="field-head"><span>Durée par clip</span><b id="lengthValue">35 s</b></div>
+          <input type="range" id="lengthRange" min="10" max="90" step="5" value="35" aria-label="Durée par clip" />
+          <div class="range-ends"><span>10 s</span><span>90 s</span></div>
+        </div>
+
+        <div class="field">
+          <span class="field-label">Format d’export</span>
+          <div class="aspects" id="aspects" role="group" aria-label="Format d’export">
+            <button type="button" data-value="9:16" class="aspect active">
+              <span class="shape vertical" aria-hidden="true"></span>
+              <span class="aspect-text"><b>Vertical</b><small>9:16 · TikTok, Shorts, Reels</small></span>
+            </button>
+            <button type="button" data-value="16:9" class="aspect">
+              <span class="shape horiz" aria-hidden="true"></span>
+              <span class="aspect-text"><b>Horizontal</b><small>16:9 · YouTube</small></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="field-label">Recadrage</span>
+          <div class="aspects" id="layouts" role="group" aria-label="Recadrage">
+            <button type="button" data-value="fill" class="aspect active">
+              <span class="shape vertical" aria-hidden="true"></span>
+              <span class="aspect-text"><b>Plein cadre</b><small>la vidéo entière, recadrée</small></span>
+            </button>
+            <button type="button" data-value="split" class="aspect">
+              <span class="shape split" aria-hidden="true"></span>
+              <span class="aspect-text"><b>Cam + gameplay</b><small>caméra en haut, jeu en bas</small></span>
+            </button>
+          </div>
+
+          <div class="cam-options hidden" id="camOptions">
+            <div class="cam-head">
+              <span class="mini-label">Zone caméra dans la source</span>
+              <button class="link-btn" id="camDetect" type="button">Détecter</button>
+            </div>
+            <div class="cam-stage" id="camStage">
+              <img id="camFrame" alt="Image de la vidéo source" draggable="false" />
+              <div class="cam-box" id="camBox" role="application" tabindex="0"
+                   aria-label="Zone caméra : glisse pour déplacer, tire le coin pour redimensionner">
+                <span class="cam-box-label">caméra</span>
+                <span class="cam-handle" id="camHandle" aria-label="Taille de la caméra"></span>
+              </div>
+            </div>
+            <p class="cam-help" id="camHelp">Glisse le cadre sur la caméra, tire le coin pour le redimensionner. Clique ailleurs pour l’y amener.</p>
+            <figure class="cam-preview">
+              <img id="camPreview" alt="Aperçu du recadrage caméra + gameplay" />
+              <figcaption id="camPreviewHint">Aperçu du rendu final</figcaption>
+            </figure>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="switch" for="subsToggle">
+            <input type="checkbox" id="subsToggle" />
+            <span class="switch-track" aria-hidden="true"></span>
+            <span class="switch-text">
+              <b>Sous-titres automatiques</b>
+              <small id="subsHint">Transcription locale de la voix</small>
+            </span>
+          </label>
+          <div class="sub-place hidden" id="subPlace">
+            <div class="sub-head">
+              <span class="mini-label">Position sur l’aperçu 9:16</span>
+              <b class="sub-pct" id="subPct">78 %</b>
+            </div>
+            <div class="sub-stage" id="subStage" role="application" tabindex="0"
+                 aria-label="Aperçu du clip : glisse le sous-titre vers le haut ou le bas">
+              <img id="subFrame" alt="Aperçu 9:16 de la vidéo source" draggable="false" />
+              <div class="sub-box" id="subBox">
+                <span>Exemple de</span><span>sous-titre</span>
+              </div>
+              <span class="sub-ui" aria-hidden="true">interface TikTok</span>
+            </div>
+            <p class="cam-help">Glisse le sous-titre (ou clique) sur l’aperçu : il reste centré et ne passe pas sous l’interface TikTok.</p>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="publish-box" id="publishBox">
+            <div class="pub-head">
+              <span class="mini-label">Publication automatique</span>
+            </div>
+            <div class="pub-providers" id="pubProviders"></div>
+            <div class="pub-actions">
+              <select id="publishPrivacy" class="text-input small" aria-label="Visibilité YouTube">
+                <option value="private">YouTube : privé</option>
+                <option value="unlisted">YouTube : non répertorié</option>
+                <option value="public">YouTube : public</option>
+              </select>
+              <button class="btn ghost small" id="publishNow" type="button">Publier maintenant</button>
+            </div>
+            <label class="switch compact" for="autoPublish">
+              <input type="checkbox" id="autoPublish" />
+              <span class="switch-track" aria-hidden="true"></span>
+              <span class="switch-text"><small>Publier dès que les clips sont prêts</small></span>
+            </label>
+            <p class="pub-status" id="pubStatus"></p>
+            <p class="hint" id="pubHint">Connecte une plateforme pour publier sans repasser par le site.</p>
+          </div>
+        </div>
+
+        <div class="progress hidden" id="jobProgress">
+          <div class="bar"><span id="jobBar"></span></div>
+          <div class="progress-meta"><span id="jobLabel">Analyse…</span><span id="jobPct">0 %</span></div>
+        </div>
+
+        <button class="btn primary wide" id="generateBtn">
+          <span class="btn-ico" aria-hidden="true">✂</span>
+          <span id="generateLabel">Générer mes clips</span>
+        </button>
+        <p class="shortcut"><kbd>Ctrl</kbd> + <kbd>Entrée</kbd> pour générer</p>
+      </aside>
+    </section>
+
+    <section class="card results-card hidden" id="resultsCard" aria-live="polite">
+      <div class="card-head">
+        <h2>Tes clips <span class="count" id="resultsCount"></span></h2>
+        <a class="btn ghost small" id="zipBtn" href="#" download>Tout télécharger (.zip)</a>
+      </div>
+      <p class="results-note" id="resultsNote"></p>
+      <div class="clip-grid" id="clipGrid"></div>
+    </section>
+  </main>
+
+  <footer>
+    <span>CLIPSTUDIO <small>· MVP local</small></span>
+    <span>Utilise uniquement des vidéos que tu es autorisé à exploiter.</span>
+  </footer>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <div class="modal hidden" id="modal" role="dialog" aria-modal="true" aria-label="Lecture du clip">
+    <div class="modal-inner">
+      <button class="modal-close" id="modalClose" aria-label="Fermer">✕</button>
+      <video id="modalVideo" controls playsinline></video>
+      <div class="modal-meta">
+        <strong id="modalTitle">Clip</strong>
+        <a class="btn primary small" id="modalDownload" href="#" download>Télécharger</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="storageModal" role="dialog" aria-modal="true" aria-label="Stockage local">
+    <div class="modal-inner storage">
+      <button class="modal-close" id="storageClose" aria-label="Fermer">✕</button>
+      <h2>Stockage local</h2>
+      <p class="hint">Imports, clips encodés et vignettes vivent dans <code>backend/data</code>. Rien ne quitte cet ordinateur.</p>
+      <div class="storage-rows" id="storageRows"></div>
+      <div class="storage-filter">
+        <label for="olderThan">Purger seulement</label>
+        <select id="olderThan" class="text-input small">
+          <option value="">tout</option>
+          <option value="1">de plus d’un jour</option>
+          <option value="7">de plus de 7 jours</option>
+          <option value="30">de plus de 30 jours</option>
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="storageCancel" type="button">Fermer</button>
+        <button class="btn danger" id="storagePurge" type="button">Purger la sélection</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/app.js?v=2"></script>
+</body>
+</html>
