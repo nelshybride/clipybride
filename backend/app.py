@@ -43,14 +43,11 @@ THUMBS = DATA / "thumbs"
 FRONTEND = PROJECT / "frontend"
 RUNTIME_BIN = PROJECT / ".runtime" / "ffmpeg" / "bin"
 
-for _p in (UPLOADS, OUTPUTS, THUMBS):
-    _p.mkdir(parents=True, exist_ok=True)
+import os
+from pathlib import Path
 
-# Runtime portable livré avec le projet : ffmpeg/ffprobe/yt-dlp, aucune installation système.
-for _bin in (RUNTIME_BIN, PROJECT / ".runtime" / "python" / "Scripts"):
-    if _bin.is_dir():
-        os.environ["PATH"] = str(_bin) + os.pathsep + os.environ.get("PATH", "")
-
+upload_dir = Path("/tmp/uploads") if os.environ.get("VERCEL") else Path("data/uploads")
+upload_dir.mkdir(parents=True, exist_ok=True)
 MAX_UPLOAD = 3 * 1024 * 1024 * 1024
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 ALLOWED_URL_HOSTS = ("youtube.com", "youtu.be", "twitch.tv", "kick.com")
