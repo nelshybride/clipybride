@@ -34,27 +34,27 @@ from starlette.concurrency import run_in_threadpool
 
 import publish as publish_mod
 
+IS_VERCEL = bool(os.environ.get("VERCEL"))
+
 ROOT = Path(__file__).resolve().parent          # backend/
 PROJECT = ROOT.parent                           # clipstudio/
-DATA = ROOT / "data"
+DATA = Path("/tmp/clipstudio") if IS_VERCEL else (ROOT / "data")
 UPLOADS = DATA / "uploads"
 OUTPUTS = DATA / "outputs"
 THUMBS = DATA / "thumbs"
 FRONTEND = PROJECT / "frontend"
 RUNTIME_BIN = PROJECT / ".runtime" / "ffmpeg" / "bin"
 
-import os
-from pathlib import Path
+for _dir in (DATA, UPLOADS, OUTPUTS, THUMBS):
+    _dir.mkdir(parents=True, exist_ok=True)
 
-upload_dir = Path("/tmp/uploads") if os.environ.get("VERCEL") else Path("data/uploads")
-upload_dir.mkdir(parents=True, exist_ok=True)
 MAX_UPLOAD = 3 * 1024 * 1024 * 1024
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 ALLOWED_URL_HOSTS = ("youtube.com", "youtu.be", "twitch.tv", "kick.com")
 CPU = os.cpu_count() or 2
 
 # Sous-titres : modèle Whisper local, téléchargé une seule fois dans le projet.
-MODELS = PROJECT / ".runtime" / "models"
+MODELS = (DATA / "models") if IS_VERCEL else (PROJECT / ".runtime" / "models")
 CACHE = DATA / "cache"
 WHISPER_MODEL_SIZE = os.environ.get("CLIPSTUDIO_WHISPER_MODEL", "base")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
@@ -235,11 +235,7 @@ def get_whisper_model():
 
 
 def decode_audio(path: Path):
-    """Audio mono 16 kHz float32, décodé par ffmpeg.
-
-    On n'utilise pas PyAV (dépendance de faster-whisper) : inutile ici, et son
-    DLL peut être bloquée par une stratégie Windows. ffmpeg est déjà là.
-    """
+    """Audio mono 16 kHz float32, décodé par ffmpeg."""
     import numpy as np
     result = subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-i", str(path),
                              "-vn", "-f", "f32le", "-acodec", "pcm_f32le",
@@ -314,13 +310,11 @@ def choose_moments(path: Path, total: float, count: int, length: float, transcri
         if selected:
             return sorted(selected), "transcription"
 
-    # Sans transcription : passages répartis dans la vidéo.
     if total <= length:
         return [0.0], "répartition temporelle"
     usable = total - length
     if count == 1:
         return [usable / 2], "répartition temporelle"
-    # Deux clips quasi confondus donneraient la même scène : on impose un écart minimal.
     min_gap = max(2.0, length * 0.25)
     starts = []
     for i in range(count):
@@ -336,8 +330,6 @@ def choose_moments(path: Path, total: float, count: int, length: float, transcri
 
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
-# Clips déjà encodés par tâche, indexés pour garder l'ordre même si les
-# encodages parallèles se terminent dans le désordre.
 JOB_READY: dict[str, dict[int, dict]] = {}
 EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clipstudio-job")
 
@@ -388,13 +380,9 @@ def write_ass(dest: Path, segments: list[dict], clip_start: float, clip_end: flo
     font_size = max(26, round(width * 0.052))
     outline = max(3, round(font_size * 0.09))
     side = round(width * 0.06)
-    # ASS : 2 = centré en bas, 5 = centré au milieu, 8 = centré en haut
-    # (MarginV compte alors depuis le bord haut).
     alignment, margin_v = {"top": (8, margin), "middle": (5, 0)}.get(position, (2, margin))
     override = ""
     if center_y is not None:
-        # an5 : le point d'ancrage est le centre du bloc, comme le cadre
-        # qu'on glisse sur l'aperçu.
         y = max(0.02, min(0.98, float(center_y)))
         alignment, margin_v = 5, 0
         override = f"{{\\an5\\pos({width // 2},{round(y * height)})}}"
@@ -470,13 +458,10 @@ def cam_rect(fw: int, fh: int, corner: str, scale: float, ratio: float) -> dict:
 
 
 def box_rect(fw: int, fh: int, x: float, y: float, w: float) -> dict:
-    """Zone caméra placée librement : origine et largeur relatives, hauteur au ratio.
-
-    C'est ce qui permet de viser une caméra qui n'est pas collée à un coin.
-    """
+    """Zone caméra placée librement : origine et largeur relatives, hauteur au ratio."""
     width = max(0.05, min(1.0, float(w))) * fw
     height = width / (BAND_W / BAND_H)
-    if height > fh:  # bande trop haute pour la source : on réduit la largeur
+    if height > fh:
         height = float(fh)
         width = height * (BAND_W / BAND_H)
     width, height = _even(width), _even(height)
@@ -533,14 +518,7 @@ def build_graph(fw: int, fh: int, aspect: str, cam: dict | None,
 
 
 def detect_cam(src: Path, total: float, strict: bool = True) -> dict | None:
-    """Repère une incrustation caméra, via ses bords rectangulaires.
-
-    On moyenne une douzaine d'images : le bord d'une caméra reste fixe alors que
-    le jeu bouge, ce qui laisse une arête nette à la frontière de l'incrustation.
-
-    `strict=False` renvoie toujours la meilleure piste, même peu sûre : l'UI s'en
-    sert comme point de départ d'un cadre que l'utilisateur déplace à la main.
-    """
+    """Repère une incrustation caméra, via ses bords rectangulaires."""
     import numpy as np
 
     width = 160
@@ -605,8 +583,6 @@ def detect_cam(src: Path, total: float, strict: bool = True) -> dict | None:
     score, corner, (_, scale, cam_w, cam_h, x0, y0) = scored[0]
     runner_up = scored[1][0]
     confidence = score / max(runner_up, 0.01)
-    # Seuil volontairement strict : mieux vaut « rien détecté » (l'utilisateur
-    # place le cadre lui-même) qu'un mauvais recadrage imposé.
     confident = score >= 2.0 and confidence >= 1.8
     if strict and not confident:
         return None
@@ -618,8 +594,6 @@ def detect_cam(src: Path, total: float, strict: bool = True) -> dict | None:
 
 def render_clip(src: Path, out: Path, start: float, length: float, graph: str,
                 label: str, threads: int, workdir: Path):
-    # cwd = dossier du job : le filtre ass= reçoit un simple nom de fichier,
-    # ce qui évite tout échappement de chemin Windows dans le graphe ffmpeg.
     run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
          "-ss", f"{start:.3f}", "-i", str(src), "-t", f"{length:.3f}",
          "-filter_complex", graph, "-map", label, "-map", "0:a?",
@@ -641,7 +615,6 @@ def run_job(job_id: str, src: Path, total: float, count: int, length: int, aspec
         fw, fh = info["width"], info["height"]
         notes: list[str] = []
 
-        # 1. Sous-titres : une seule transcription, réutilisée pour tous les clips.
         subtitles = bool(options.get("subtitles"))
         transcript = None
         if subtitles and not _whisper_available():
@@ -656,13 +629,11 @@ def run_job(job_id: str, src: Path, total: float, count: int, length: int, aspec
                 subtitles = False
                 notes.append(f"Transcription impossible ({str(exc)[:140]}).")
 
-        # 2. Cadrage caméra + gameplay.
         cam = None
         layout = options.get("layout") or "fill"
         if layout == "split" and aspect == "9:16":
             box = options.get("cam_box")
             if box:
-                # Zone choisie à la main : on la respecte telle quelle.
                 cam = box_rect(fw, fh, box["x"], box["y"], box["w"])
             else:
                 corner = options.get("cam_corner") or "auto"
@@ -691,7 +662,6 @@ def run_job(job_id: str, src: Path, total: float, count: int, length: int, aspec
         done = itertools.count(1)
 
         def publish_clip(index: int, entry: dict, **fields):
-            """Rend un clip visible dès qu'il est écrit, sans attendre les autres."""
             with JOBS_LOCK:
                 job = JOBS.get(job_id)
                 if job is None:
@@ -755,7 +725,7 @@ def run_job(job_id: str, src: Path, total: float, count: int, length: int, aspec
         job_update(job_id, status="done", progress=1.0, message="Clips prêts",
                    clips=clips, zip_url=f"/media/{job_id}/clips.zip")
         JOB_READY.pop(job_id, None)
-    except Exception as exc:  # noqa: BLE001 - remonté au client via /api/jobs
+    except Exception as exc:  # noqa: BLE001
         JOB_READY.pop(job_id, None)
         shutil.rmtree(job_dir, ignore_errors=True)
         job_update(job_id, status="error", progress=1.0,
@@ -849,6 +819,7 @@ def load_channels():
 
 
 def save_channels(items):
+    TWITCH_CHANNELS.parent.mkdir(parents=True, exist_ok=True)
     TWITCH_CHANNELS.write_text(json.dumps(items, ensure_ascii=False, indent=2),
                                encoding="utf-8")
 
@@ -876,6 +847,8 @@ def clip_mp4_url(thumbnail):
 def dir_stats(path: Path) -> dict:
     total = 0
     files = 0
+    if not path.exists():
+        return {"bytes": 0, "files": 0}
     for item in path.rglob("*"):
         if item.is_file():
             files += 1
@@ -896,6 +869,7 @@ def storage_snapshot() -> dict:
 def health():
     return {
         "ok": True,
+        "vercel": IS_VERCEL,
         "ffmpeg": shutil.which("ffmpeg") is not None,
         "ffprobe": shutil.which("ffprobe") is not None,
         "yt_dlp": module_available("yt_dlp"),
@@ -906,6 +880,8 @@ def health():
 @app.post("/api/upload")
 async def upload_video(request: Request):
     """Upload en flux brut : pas de fichier temporaire, écriture unique."""
+    UPLOADS.mkdir(parents=True, exist_ok=True)
+    THUMBS.mkdir(parents=True, exist_ok=True)
     raw_name = unquote(request.headers.get("x-filename", "video.mp4"))
     filename = Path(raw_name).name or "video.mp4"
     ext = Path(filename).suffix.lower()
@@ -951,13 +927,13 @@ async def upload_video(request: Request):
 
 @app.post("/api/url")
 def import_url(req: UrlRequest):
+    UPLOADS.mkdir(parents=True, exist_ok=True)
+    THUMBS.mkdir(parents=True, exist_ok=True)
     url = str(req.url)
     if not is_supported_video_url(url):
         raise HTTPException(400, "Seules les URL YouTube, Twitch et Kick sont acceptées.")
     source_id = uuid.uuid4().hex
     try:
-        # Appel par module : le .exe genere par pip contient un chemin absolu
-        # qui casse des que le projet est copie sur une autre machine.
         run([sys.executable, "-m", "yt_dlp", "--no-playlist", "--no-warnings",
              "-f", "bv*+ba/b", "--merge-output-format", "mp4",
              "-o", str(UPLOADS / source_id) + ".%(ext)s", url], timeout=3600)
@@ -1067,7 +1043,7 @@ def oauth_callback(request: Request, provider: str, code: str = "", state: str =
         try:
             publish_mod.finish_auth(code, state, redirect)
             message, ok = f"{publish_mod.LABELS[provider]} connecté. Tu peux fermer cet onglet.", True
-        except Exception as exc:  # noqa: BLE001 - affiché à l'utilisateur
+        except Exception as exc:  # noqa: BLE001
             message, ok = f"Connexion impossible : {html_escape(str(exc))}", False
     color = "#3ddc97" if ok else "#ff6b6b"
     return HTMLResponse(f"""<!doctype html><html lang="fr"><meta charset="utf-8">
@@ -1201,6 +1177,7 @@ def twitch_set_credentials(req: TwitchCredentials):
                                             "grant_type": "client_credentials"})
     except RuntimeError as exc:
         raise HTTPException(400, f"Identifiants refusés — {exc}")
+    TWITCH_CONFIG.parent.mkdir(parents=True, exist_ok=True)
     TWITCH_CONFIG.write_text(json.dumps({"client_id": cid, "client_secret": secret}, indent=2),
                              encoding="utf-8")
     with _twitch_lock:
@@ -1281,6 +1258,8 @@ def twitch_clips(login: str, period: str = "week", limit: int = 24):
 
 @app.post("/api/twitch/import")
 def twitch_import(req: TwitchClipImport):
+    UPLOADS.mkdir(parents=True, exist_ok=True)
+    THUMBS.mkdir(parents=True, exist_ok=True)
     url = str(req.url)
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
@@ -1317,7 +1296,6 @@ def storage_purge(req: PurgeRequest):
         busy = any(job["status"] in ("queued", "running") for job in JOBS.values())
     if busy:
         raise HTTPException(409, "Une génération est en cours : attends la fin avant de purger.")
-    # Une chaîne Twitch n'est pas un fichier : on ne touche qu'aux médias.
     folders = {"uploads": UPLOADS, "outputs": OUTPUTS, "thumbs": THUMBS}
     targets = [name for name in req.targets if name in folders]
     if not targets:
@@ -1326,6 +1304,8 @@ def storage_purge(req: PurgeRequest):
     freed = 0
     deleted = 0
     for name in targets:
+        if not folders[name].exists():
+            continue
         for item in list(folders[name].iterdir()):
             try:
                 if cutoff and item.stat().st_mtime > cutoff:
@@ -1353,8 +1333,8 @@ async def no_cache_frontend(request, call_next):
 
 
 # Fichiers produits (les StaticFiles gèrent le Range, donc la lecture/seek vidéo).
-app.mount("/media", StaticFiles(directory=OUTPUTS), name="media")
-app.mount("/thumbs", StaticFiles(directory=THUMBS), name="thumbs")
-app.mount("/sources", StaticFiles(directory=UPLOADS), name="sources")
+app.mount("/media", StaticFiles(directory=OUTPUTS, check_dir=False), name="media")
+app.mount("/thumbs", StaticFiles(directory=THUMBS, check_dir=False), name="thumbs")
+app.mount("/sources", StaticFiles(directory=UPLOADS, check_dir=False), name="sources")
 if FRONTEND.is_dir():
     app.mount("/", StaticFiles(directory=FRONTEND, html=True), name="frontend")

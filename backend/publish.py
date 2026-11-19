@@ -1,9 +1,4 @@
-"""Publication automatique des clips (YouTube, TikTok).
-
-Tout reste sur la machine : les identifiants d'application et les jetons OAuth
-vivent dans `backend/data/publish.json` et ne sont jamais renvoyés au navigateur.
-Aucune bibliothèque externe : `urllib` suffit pour OAuth et l'envoi des vidéos.
-"""
+"""Publication automatique des clips (YouTube, TikTok)."""
 
 from __future__ import annotations
 
@@ -17,11 +12,14 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-DATA = Path(__file__).resolve().parent / "data"
+IS_VERCEL = bool(os.environ.get("VERCEL"))
+DATA = Path("/tmp/clipstudio") if IS_VERCEL else (Path(__file__).resolve().parent / "data")
 OUTPUTS = DATA / "outputs"
 CONFIG = DATA / "publish.json"
 
-# Points d'entrée officiels (surchargeables pour les tests).
+DATA.mkdir(parents=True, exist_ok=True)
+OUTPUTS.mkdir(parents=True, exist_ok=True)
+
 YOUTUBE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
 YOUTUBE_TOKEN = "https://oauth2.googleapis.com/token"
 YOUTUBE_UPLOAD = "https://www.googleapis.com/upload/youtube/v3/videos"
@@ -40,14 +38,10 @@ ENV_KEYS = {
 }
 
 CFG_LOCK = threading.Lock()
-PENDING: dict[str, str] = {}          # state OAuth -> fournisseur
-PUBLISH: dict[str, dict] = {}          # job_id -> état de publication
+PENDING: dict[str, str] = {}
+PUBLISH: dict[str, dict] = {}
 PUBLISH_LOCK = threading.Lock()
 
-
-# --------------------------------------------------------------------------- #
-# Configuration locale
-# --------------------------------------------------------------------------- #
 
 def _load() -> dict:
     try:
@@ -66,7 +60,6 @@ def _provider_cfg(provider: str) -> dict:
 
 
 def credentials(provider: str) -> tuple[str, str]:
-    """Client id/secret : variables d'environnement d'abord, puis fichier local."""
     key_id, key_secret = ENV_KEYS[provider]
     cid = os.environ.get(key_id, "").strip()
     secret = os.environ.get(key_secret, "").strip()
@@ -128,10 +121,6 @@ def status() -> dict:
         }
     return {"providers": providers}
 
-
-# --------------------------------------------------------------------------- #
-# OAuth (redirection loopback, adaptée à une app de bureau)
-# --------------------------------------------------------------------------- #
 
 def build_auth_url(provider: str, redirect_uri: str) -> str:
     cid, secret = credentials(provider)
@@ -225,10 +214,6 @@ def access_token(provider: str) -> str:
     return _refresh(provider)
 
 
-# --------------------------------------------------------------------------- #
-# HTTP minimal
-# --------------------------------------------------------------------------- #
-
 def _json_response(request: Request, timeout: float) -> tuple[int, dict, dict]:
     try:
         with urlopen(request, timeout=timeout) as response:
@@ -256,10 +241,6 @@ def _post_form(url: str, fields: dict) -> dict:
     _, payload, _ = _json_response(request, 60)
     return payload
 
-
-# --------------------------------------------------------------------------- #
-# Envoi des vidéos
-# --------------------------------------------------------------------------- #
 
 def _youtube_upload(path: Path, title: str, description: str, privacy: str, token: str) -> dict:
     size = path.stat().st_size
@@ -349,10 +330,6 @@ def _tiktok_upload(path: Path, title: str, token: str) -> dict:
     return {"id": publish_id, "url": None}
 
 
-# --------------------------------------------------------------------------- #
-# File de publication d'une tâche
-# --------------------------------------------------------------------------- #
-
 def _clip_title(clip: dict) -> str:
     start = float(clip.get("start") or 0)
     return f"Extrait {int(start // 60)}:{int(start % 60):02d} · {int(float(clip.get('duration') or 0))} s"
@@ -386,7 +363,7 @@ def _run_publish(job_id: str, provider: str, privacy: str, clips: list[dict]) ->
             with PUBLISH_LOCK:
                 entry = next(c for c in PUBLISH[job_id]["clips"] if c["name"] == clip["name"])
                 entry.update(state="publié", url=result.get("url"), id=result.get("id"))
-        except Exception as exc:  # noqa: BLE001 - remonté dans l'état du job
+        except Exception as exc:
             with PUBLISH_LOCK:
                 entry = next(c for c in PUBLISH[job_id]["clips"] if c["name"] == clip["name"])
                 entry.update(state="échec", error=str(exc))
